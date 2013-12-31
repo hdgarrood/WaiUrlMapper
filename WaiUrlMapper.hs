@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings, TypeSynonymInstances, FlexibleInstances #-}
 module WaiUrlMapper where
 
-import Prelude hiding (map)
 import Control.Monad.State
 import Data.Monoid
 import Data.Char
