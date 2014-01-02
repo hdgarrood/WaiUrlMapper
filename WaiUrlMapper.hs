@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TypeSynonymInstances, FlexibleInstances #-}
 module WaiUrlMapper where
 
-import Control.Monad.State
+import Control.Monad.Writer
 import Data.Monoid
 import Data.Char
 import Data.List
@@ -14,38 +14,26 @@ import Network.HTTP.Types
 import Network.Wai
 import Network.Wai.Handler.Warp
 
-class ToLazyByteString a where
-    toLBS :: a -> BL.ByteString
-
-instance ToLazyByteString B.ByteString where
-    toLBS = BL.fromChunks . (: [])
-
-instance ToLazyByteString String where
-    toLBS = BL.pack . map (fromIntegral . ord)
-
 type Path = [Text]
 type UrlMap = [(Path, Application)]
-type UrlMapM = State UrlMap ()
-
-prepend :: a -> State [a] ()
-prepend x = modify (\s -> x : s)
+type UrlMapM = Writer UrlMap ()
 
 mount :: ToApplication a => Path -> a -> UrlMapM
-mount prefix thing = prepend (prefix, toApplication thing)
+mount prefix thing = tell [(prefix, toApplication thing)]
 
+-- A little helper function, since most of the time, apps are mounted under
+-- a single path segment.
 mount' :: ToApplication a => Text -> a -> UrlMapM
 mount' prefix thing = mount [prefix] thing
 
+-- Another little helper function. Use this for the last mounted
+-- application in the block, to avoid 500 errors from none matching.
 mountRoot :: ToApplication a => a -> UrlMapM
 mountRoot = mount []
 
 runUrlMapM :: UrlMapM -> UrlMap
-runUrlMapM x = reverse $ execState x []
+runUrlMapM = execWriter
 
--- try ["hello", "world"]
---      [(["hello"], lol)]
---
--- ==> Just (["world", lol])
 try :: Eq a
     => [a]        -- ^ Path info of request
     -> [([a], b)] -- ^ List of applications to match
@@ -62,7 +50,7 @@ instance ToApplication Application where
     toApplication = id
 
 instance ToApplication UrlMap where
-    toApplication urlMap = \req -> do
+    toApplication urlMap = \req ->
         case try (pathInfo req) urlMap of
             Just (newPath, app) ->
                 app $ req { pathInfo = newPath
@@ -82,9 +70,19 @@ instance ToApplication UrlMap where
 instance ToApplication UrlMapM where
     toApplication = toApplication . runUrlMapM
 
--- A friendlier alias
 mapUrls :: UrlMapM -> Application
 mapUrls = toApplication
+
+-- And here's some example code which uses it:
+
+class ToLazyByteString a where
+    toLBS :: a -> BL.ByteString
+
+instance ToLazyByteString B.ByteString where
+    toLBS = BL.fromChunks . (: [])
+
+instance ToLazyByteString String where
+    toLBS = BL.pack . map (fromIntegral . ord)
 
 trivialApp :: BL.ByteString -> Application
 trivialApp msg req = return $
@@ -101,8 +99,8 @@ oneApp = trivialApp "one"
 twoApp = trivialApp "two"
 defApp = trivialApp "default"
 
-main :: IO ()
-main = run 3000 $ mapUrls $ do
+urlmap :: UrlMapM
+urlmap = do
     mount' "one" oneApp
     mount' "two" $ do
         -- Note that (by design) this cannot 'fall up' into the outer do
@@ -110,3 +108,6 @@ main = run 3000 $ mapUrls $ do
         -- below, or we'll get a 500 error.
         mount ["three", "four"] twoApp
     mountRoot defApp
+
+main :: IO ()
+main = run 3000 $ mapUrls urlmap
