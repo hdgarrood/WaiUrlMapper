@@ -75,39 +75,41 @@ mapUrls = toApplication
 
 -- And here's some example code which uses it:
 
-class ToLazyByteString a where
-    toLBS :: a -> BL.ByteString
-
-instance ToLazyByteString B.ByteString where
-    toLBS = BL.fromChunks . (: [])
-
-instance ToLazyByteString String where
-    toLBS = BL.pack . map (fromIntegral . ord)
-
 trivialApp :: BL.ByteString -> Application
 trivialApp msg req = return $
     responseLBS
         status200
         [("content-type", "text/plain")]
         (msg <>
-            "\nrawPathInfo: " <> toLBS (rawPathInfo req) <>
-            "\npathInfo: " <> toLBS (show $ pathInfo req) <>
+            "\nrawPathInfo: " <> strictToLazy (rawPathInfo req) <>
+            "\npathInfo: " <> stringToLBS (show $ pathInfo req) <>
             "\n")
 
-oneApp, twoApp, defApp :: Application
-oneApp = trivialApp "one"
-twoApp = trivialApp "two"
-defApp = trivialApp "default"
+    where
+    strictToLazy :: B.ByteString -> BL.ByteString
+    strictToLazy = BL.fromChunks . (: [])
+
+    stringToLBS :: String -> BL.ByteString
+    stringToLBS = BL.pack . map (fromIntegral . ord)
+
+bugsApp, helpdeskApp, apiV1, apiV2, mainApp :: Application
+bugsApp     = trivialApp "this is the bugs app"
+helpdeskApp = trivialApp "this is the helpdesk app"
+apiV1       = trivialApp "api, version 1"
+apiV2       = trivialApp "api, version 2"
+mainApp     = trivialApp "this is the main site"
 
 urlmap :: UrlMapM
 urlmap = do
-    mount' "one" oneApp
-    mount' "two" $ do
+    mount' "bugs" bugsApp
+    mount' "helpdesk" helpdeskApp
+    mount' "api" $ do
         -- Note that (by design) this cannot 'fall up' into the outer do
         -- block. So if we get here, it will have to either match the mapping
         -- below, or we'll get a 500 error.
-        mount ["three", "four"] twoApp
-    mountRoot defApp
+        mount' "v1" apiV1
+        mount' "v2" apiV2
+    mountRoot mainApp
 
 main :: IO ()
 main = run 3000 $ mapUrls urlmap
